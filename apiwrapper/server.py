@@ -7,11 +7,11 @@ import datetime
 import requests
 import time
 import json
-# from requests.packages.urllib3.exceptions import InsecureRequestWarning
+from requests.packages.urllib3.exceptions import InsecureRequestWarning
 import logging
 
 # Disable annoying HTTP warnings
-# requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
+requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
 
 """"
 The 'requests' package is very chatty on the INFO logging level.  Change its logging threshold sent to logger to
@@ -23,24 +23,30 @@ logging.getLogger("requests").setLevel(logging.WARNING)
 
 class Server(object):
     """
-The FMC class has a series of methods, lines that start with "def", that are used to interact with the Cisco FMC
-via its API.  Each method has its own DOCSTRING (like this triple quoted text here) describing its functionality.
+The Server class has a series of methods, lines that start with "def", that are used to interact with a server's REST
+API.  Each method has its own DOCSTRING (like this triple quoted text here) describing its functionality.
     """
-    logging.debug("In the FMC() class.")
+    logging.debug("In the Server() class.")
 
+    # The example server API (Cisco's FMC server) has 2 different URL paths for the various API calls.
     API_CONFIG_VERSION = 'api/fmc_config/v1'
     API_PLATFORM_VERSION = 'api/fmc_platform/v1'
+
     VERIFY_CERT = False
     MAX_PAGING_REQUESTS = 2000
 
-    def __init__(self, host='192.168.45.45', username='admin', password='Admin123', domain=None, autodeploy=True,
-                 file_logging=None, debug=False, limit=25):
+    def __init__(self,
+                 host='192.168.45.45',
+                 username='admin',
+                 password='Admin123',
+                 file_logging=None,
+                 debug=False,
+                 ):
         """
         Instantiate some variables prior to calling the __enter__() method.
         :param host:
         :param username:
         :param password:
-        :param autodeploy:
         :param file_logging (str): The filename (and optional path) of the output file if a file logger is required,
         None if no file logger is required
         :param debug (bool): True to enable debug logging, default is False
@@ -56,55 +62,43 @@ via its API.  Each method has its own DOCSTRING (like this triple quoted text he
             file_logger.setFormatter(formatter)
             root_logger.addHandler(file_logger)
 
-        logging.debug("In the FMC __init__() class method.")
+        logging.debug("In the Server __init__() class method.")
 
         self.host = host
         self.username = username
         self.password = password
-        self.domain = domain
-        self.autodeploy = autodeploy
-        self.limit = limit
 
     def __enter__(self):
         """
-        Get a token from the FMC as well as the Global UUID.  With this information set up the base_url variable.
+        Get a token from the server as well as the Global UUID.  With this information set up the base_url variable.
         :return:
         """
-        logging.debug("In the FMC __enter__() class method.")
+        logging.debug("In the Server __enter__() class method.")
         self.mytoken = Token(host=self.host,
                              username=self.username,
                              password=self.password,
-                             domain=self.domain,
-                             verify_cert=self.VERIFY_CERT)
+                             verify_cert=self.VERIFY_CERT,
+                             )
         self.uuid = self.mytoken.uuid
         self.build_urls()
-        self.version()
-        logging.info(f"This FMC's version is {self.serverVersion}")
         return self
 
     def __exit__(self, *args):
         """
-        If autodeploy == True push changes to FMC upon exit of "with" contract.
         :param args:
         :return:
         """
-        logging.debug("In the FMC __exit__() class method.")
-
-        if self.autodeploy:
-            self.deploy_changes()
-        else:
-            logging.info("Auto deploy changes set to False.  "
-                         "Use the Deploy button in FMC to push changes to FTDs.\n\n")
+        logging.debug("In the Server __exit__() class method.")
 
     def build_urls(self):
         """
         The FMC APIs appear to use 2 base URLs, depending on what that API is for.  One for "configuration" and the
         other for FMC "platform" things.
         """
-        logging.debug("In the FMC build_urls() class method.")
+        logging.debug("In the Server build_urls() class method.")
         logging.info('Building base to URLs.')
-        self.configuration_url = "https://{}/{}/domain/{}".format(self.host, self.API_CONFIG_VERSION, self.uuid)
-        self.platform_url = "https://{}/{}".format(self.host, self.API_PLATFORM_VERSION)
+        self.configuration_url = f"https://{self.host}/{self.API_CONFIG_VERSION}"
+        self.platform_url = f"https://{self.host}/{self.API_PLATFORM_VERSION}"
 
     def send_to_api(self, method='', url='', headers='', json_data=None, more_items=[]):
         """
@@ -114,7 +108,7 @@ via its API.  Each method has its own DOCSTRING (like this triple quoted text he
         :param json_data:
         :return:
         """
-        logging.debug("In the FMC send_to_api() class method.")
+        logging.debug("In the Server send_to_api() class method.")
 
         if not more_items:
             self.more_items = []
@@ -140,7 +134,7 @@ via its API.  Each method has its own DOCSTRING (like this triple quoted text he
                     return
                 status_code = response.status_code
                 if status_code == 429:
-                    logging.warning("Too many connections to the FMC.  Waiting 30 seconds and trying again.")
+                    logging.warning("Too many connections to the Server.  Waiting 30 seconds and trying again.")
                     time.sleep(30)
                 if status_code == 401:
                     logging.warning("Token has expired. Trying to refresh.")
@@ -151,8 +145,8 @@ via its API.  Each method has its own DOCSTRING (like this triple quoted text he
             if status_code > 301 or 'error' in json_response:
                 response.raise_for_status()
         except requests.exceptions.HTTPError as err:
-            logging.error("Error in POST operation --> {}".format(str(err)))
-            logging.error("json_response -->\t{}".format(json_response))
+            logging.error(f"Error in POST operation --> {str(err)}")
+            logging.error(f"json_response -->\t{json_response}")
             if response:
                 response.close()
             return None
@@ -161,11 +155,10 @@ via its API.  Each method has its own DOCSTRING (like this triple quoted text he
         try:
             if 'next' in json_response['paging'] and self.page_counter <= self.MAX_PAGING_REQUESTS:
                 self.more_items += json_response['items']
-                logging.info('Paging:  Offset:{}, Limit:{}, Count:{}, Gathered_Items:{}'.
-                             format(json_response['paging']['offset'],
-                                    json_response['paging']['limit'],
-                                    json_response['paging']['count'],
-                                    len(self.more_items)))
+                logging.info(f"Paging:  Offset:{json_response['paging']['offset']}, "
+                             f"Limit:{json_response['paging']['limit']}, "
+                             f"Count:{json_response['paging']['count']}, "
+                             f"Gathered_Items:{self.more_items}")
                 self.page_counter += 1
                 return self.send_to_api(method=method,
                                         url=json_response['paging']['next'][0],
@@ -179,101 +172,10 @@ via its API.  Each method has its own DOCSTRING (like this triple quoted text he
             # Used only when the response only has "one page" of results.
             return json_response
 
-    def version(self):
-        """
-        Get the FMC's version information.  Set instance variables for each version info returned as well as return
-        the whole response text.
-        :return:
-        """
-        logging.debug("In the FMC version() class method.")
-        logging.info('Collecting version information from FMC.')
-
-        url_suffix = '/info/serverversion'
-        url = '{}{}'.format(self.platform_url, url_suffix)
-
-        response = self.send_to_api(method='get', url=url)
-        if 'items' in response:
-            logging.info('Populating vdbVersion, sruVersion, serverVersion, and geoVersion FMC instance variables.')
-            self.vdbVersion = response['items'][0]['vdbVersion']
-            self.sruVersion = response['items'][0]['sruVersion']
-            self.serverVersion = response['items'][0]['serverVersion']
-            self.geoVersion = response['items'][0]['geoVersion']
-        return response
-
-    def audit(self, **kwargs):
-        """
-        This API function supports filtering the GET query URL with: username, subsystem, source, starttime, and
-        endtime parameters.
-        :return: response
-        """
-        url_parameters = 'expanded=true'
-        url_suffix = '/audit/auditrecords'
-        url = '{}/domain/{}{}?{}'.format(self.platform_url, self.uuid, url_suffix, url_parameters)
-
-        response = self.send_to_api(method='get', url=url)
-        return response
-
-    def get_deployable_devices(self):
-        """
-        Collect a list of FMC managed devices who's configuration is not up-to-date.
-        :return: List of devices needing updates.
-        """
-        logging.debug("In the FMC get_deployable_devices() class method.")
-
-        waittime = 15
-        logging.info("Waiting {} seconds to allow the FMC to update the list of deployable devices.".format(waittime))
-        time.sleep(waittime)
-        logging.info("Getting a list of deployable devices.")
-        url_suffix = "/deployment/deployabledevices?expanded=true"
-        url = '{}{}'.format(self.configuration_url, url_suffix)
-        response = self.send_to_api(method='get', url=url)
-        # Now to parse the response list to get the UUIDs of each device.
-        if 'items' not in response:
-            return
-        uuids = []
-        for item in response['items']:
-            if not item['canBeDeployed']:
-                pass
-            else:
-                uuids.append(item)
-        return uuids
-
-    def deploy_changes(self):
-        """
-        Iterate through the list of devices needing deployed and submit a request to the FMC to deploy changes to them.
-        :return:
-        """
-        logging.debug("In the deploy_changes() class method.")
-
-        url_suffix = "/deployment/deploymentrequests"
-        url = '{}{}'.format(self.configuration_url, url_suffix)
-        devices = self.get_deployable_devices()
-        if not devices:
-            logging.info("No devices need deployed.\n\n")
-            return
-        json_data = {
-            'type': 'DeploymentRequest',
-            'forceDeploy': True,
-            'ignoreWarning': True,
-            'version': str(int(1000000 * datetime.datetime.utcnow().timestamp())),
-            'deviceList': []
-        }
-        for device in devices:
-            logging.info("Adding device {} to deployment queue.".format(device))
-            json_data['deviceList'].append(device['device']['id'])
-            # From the list of deployable devices get the version value that is smallest.
-            if int(json_data['version']) > int(device['version']):
-                logging.info(f"Updating version to {device['version']}")
-                json_data['version'] = device['version']
-
-        logging.info("Deploying changes to devices.")
-        response = self.send_to_api(method='post', url=url, json_data=json_data)
-        return response['deviceList']
-
 
 class Token(object):
     """
-    The token is the validation object used with the FMC.
+    The token is the validation object used with the Server.
 
     """
     logging.debug("In the Token class.")
@@ -282,7 +184,7 @@ class Token(object):
     TOKEN_LIFETIME = 60 * 30
     API_PLATFORM_VERSION = 'api/fmc_platform/v1'
 
-    def __init__(self, host='192.168.45.45', username='admin', password='Admin123', domain=None, verify_cert=False):
+    def __init__(self, host='192.168.45.45', username='admin', password='Admin123', verify_cert=False):
         """
         Initialize variables used in the Token class.
         :param host:
@@ -295,7 +197,6 @@ class Token(object):
         self.__host = host
         self.__username = username
         self.__password = password
-        self.__domain = domain
         self.verify_cert = verify_cert
         self.token_expiry = None
         self.token_refreshes = 0
@@ -314,30 +215,24 @@ class Token(object):
         if self.token_refreshes <= self.MAX_REFRESHES and self.access_token is not None:
             headers = {'Content-Type': 'application/json', 'X-auth-access-token': self.access_token,
                        'X-auth-refresh-token': self.refresh_token}
-            url = 'https://{}/{}/auth/refreshtoken'.format(self.__host, self.API_PLATFORM_VERSION)
-            logging.info("Refreshing tokens, {} out of {} refreshes, from {}.".format(self.token_refreshes,
-                                                                                      self.MAX_REFRESHES, url))
+            url = f'https://{self.__host}/{self.API_PLATFORM_VERSION}/auth/refreshtoken'
+            logging.info(
+                f"Refreshing tokens, {self.token_refreshes} out of {self.MAX_REFRESHES} refreshes, from {url}.")
             response = requests.post(url, headers=headers, verify=self.verify_cert)
             self.token_refreshes += 1
         else:
             headers = {'Content-Type': 'application/json'}
-            url = 'https://{}/{}/auth/generatetoken'.format(self.__host, self.API_PLATFORM_VERSION)
-            logging.info("Requesting new tokens from {}.".format(url))
-            response = requests.post(url, headers=headers,
+            url = f'https://{self.__host}/{self.API_PLATFORM_VERSION}/auth/generatetoken'
+            logging.info(f"Requesting new tokens from {url}.")
+            response = requests.post(url,
+                                     headers=headers,
                                      auth=requests.auth.HTTPBasicAuth(self.__username, self.__password),
-                                     verify=self.verify_cert)
+                                     verify=self.verify_cert,
+                                     )
             self.token_refreshes = 0
         self.access_token = response.headers.get('X-auth-access-token')
         self.refresh_token = response.headers.get('X-auth-refresh-token')
         self.token_expiry = datetime.datetime.now() + datetime.timedelta(seconds=self.TOKEN_LIFETIME)
-        self.uuid = response.headers.get('DOMAIN_UUID')
-        all_domain = json.loads(response.headers.get('DOMAINS'))
-        if self.__domain is not None:
-            for domain in all_domain:
-                if 'global/' + self.__domain.lower() == domain['name'].lower():
-                    self.uuid = domain['uuid']
-                else:
-                    logging.info("Domain name entered not found in FMC, falling back to Global")
 
     def get_token(self):
         """
